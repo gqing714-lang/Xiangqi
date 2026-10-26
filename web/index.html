@@ -32,6 +32,21 @@
     .spot.last::after{content:"";position:absolute;inset:12%;border:2px solid #b68534;border-radius:50%;pointer-events:none}
     .spot.target::before{content:"";position:absolute;width:13px;height:13px;background:#38834b;border-radius:50%;z-index:2;opacity:.9}
     .spot.target.capture::before{width:70%;height:70%;border:3px solid #38834b;background:transparent}
+    [hidden]{display:none!important}
+    .assist{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
+    .assist label{display:inline-flex;align-items:center;gap:6px;border:1px solid #c7b79f;background:#fbf5e8;border-radius:10px;padding:9px 10px;font-size:13px;cursor:pointer}
+    .assist input{accent-color:#398052;width:16px;height:16px;margin:0}
+    .insights{margin-top:10px;background:#fbf6ea;border:1px solid #d9cbb4;border-radius:12px;padding:12px 14px;color:#574c40;font-size:13px;line-height:1.75}
+    .insights strong{display:block;color:#382e25;font-size:14px;margin-bottom:2px}
+    .insights p{margin:0;white-space:pre-line}
+    .insights .disclaimer{font-size:11px;color:#83776c;margin-top:5px}
+    .preview-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    .preview-controls button{min-height:38px}
+    .preview-controls .confirm{background:#367e53;border-color:#367e53;color:white}
+    .spot.threatened .piece{box-shadow:0 0 0 3px #d2564a,0 2px 5px #34241350}
+    .spot.preview-end .piece{outline:3px solid #3069a0;outline-offset:2px}
+    .spot.preview-start::after{content:"";position:absolute;inset:18%;border:2px dashed #3069a0;border-radius:50%;pointer-events:none}
+    .spot.preview-end.threatened .piece{box-shadow:0 0 0 4px #d2564a,0 2px 5px #34241350}
     .bottom{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:12px 0;flex-wrap:wrap}
     .instructions{flex:1;min-width:190px;color:#665b50;font-size:13px;line-height:1.6}
     .actions{display:flex;gap:6px}
@@ -56,6 +71,20 @@
     <div class="board-shell"><div class="board" id="board" role="grid" aria-label="中国象棋棋盘">
       <div class="river" aria-hidden="true">楚 河 <span>漢 界</span></div>
     </div></div>
+    <div class="assist" aria-label="新手辅助设置">
+      <label><input type="checkbox" id="showDanger" checked>危险提示</label>
+      <label><input type="checkbox" id="usePreview">落子先预览</label>
+      <label><input type="checkbox" id="showTips" checked>思路提示</label>
+    </div>
+    <section id="insights" class="insights" aria-live="polite" hidden>
+      <strong id="insightTitle">局势提示</strong>
+      <p id="insightText"></p>
+      <div id="previewControls" class="preview-controls" hidden>
+        <button class="action confirm" id="confirmMove">确认落子</button>
+        <button class="action" id="cancelMove">取消预览</button>
+      </div>
+      <div class="disclaimer">危险标记按棋子的攻击路线计算，不等于对手一定能合法吃子；预览不会改变真实棋局。</div>
+    </section>
     <div class="bottom">
       <div class="instructions" id="hint">点击自己的棋子，再点击绿色标记落子。</div>
       <div class="actions"><button class="action" id="refresh">刷新棋局</button><button class="action" id="copy">复制棋局链接</button><button class="action" id="new">新开一局</button></div>
@@ -72,7 +101,8 @@
     };
     const el = id => document.getElementById(id);
     const boardEl = el("board"), errorEl = el("error"), hintEl = el("hint");
-    let game = null, selected = null, busy = false, loading = false;
+    let game = null, selected = null, pendingMove = null, busy = false, loading = false;
+    const assist = {danger:true,preview:false,tips:true};
     let gameId = new URLSearchParams(location.search).get("game") || "";
     if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(gameId)) gameId = "";
     function parseFen(fen){
@@ -86,6 +116,79 @@
       return pieces;
     }
     function message(t){errorEl.textContent=t||""}
+
+    function squareParts(s){return ["abcdefghi".indexOf(s[0]),Number(s[1])]}
+    function inPalace(x,y,color){return x>=3&&x<=5&&(color==="red"?y>=0&&y<=2:y>=7&&y<=9)}
+    function blockers(board,from,to){
+      const [x,y]=squareParts(from),[tx,ty]=squareParts(to);
+      if(x!==tx&&y!==ty)return -1;
+      const dx=Math.sign(tx-x),dy=Math.sign(ty-y),length=Math.abs(tx-x)+Math.abs(ty-y);
+      let n=0;
+      for(let i=1;i<length;i++)if(board.has(FILES[x+dx*i]+(y+dy*i)))n++;
+      return n;
+    }
+    // Static attack geometry only. The server remains authoritative for legal moves.
+    function attacks(board,from,to){
+      if(from===to)return false;
+      const piece=board.get(from);if(!piece)return false;
+      const color=LABELS[piece]?.[1],type=piece.toLowerCase();
+      const [x,y]=squareParts(from),[tx,ty]=squareParts(to);
+      const dx=tx-x,dy=ty-y,ax=Math.abs(dx),ay=Math.abs(dy);
+      if(type==="r")return (dx===0||dy===0)&&blockers(board,from,to)===0;
+      if(type==="c")return (dx===0||dy===0)&&blockers(board,from,to)===1;
+      if(type==="n"){
+        if(ax===1&&ay===2)return !board.has(FILES[x]+(y+Math.sign(dy)));
+        if(ax===2&&ay===1)return !board.has(FILES[x+Math.sign(dx)]+y);
+        return false;
+      }
+      if(type==="b")return ax===2&&ay===2&&(color==="red"?ty<=4:ty>=5)&&!board.has(FILES[x+dx/2]+(y+dy/2));
+      if(type==="a")return ax===1&&ay===1&&inPalace(tx,ty,color);
+      if(type==="p")return (dx===0&&dy===(color==="red"?1:-1))||(ay===0&&ax===1&&(color==="red"?y>=5:y<=4));
+      if(type==="k"){
+        if(ax+ay===1&&inPalace(tx,ty,color))return true;
+        return dx===0&&board.get(to)?.toLowerCase()==="k"&&blockers(board,from,to)===0;
+      }
+      return false;
+    }
+    function dangerMap(board,color){
+      const result=new Map();
+      const enemies=[...board].filter(([_,piece])=>LABELS[piece]?.[1]!==color);
+      for(const [sq,piece] of board){
+        if(LABELS[piece]?.[1]!==color)continue;
+        const foes=enemies.filter(([from])=>attacks(board,from,sq));
+        if(foes.length)result.set(sq,foes.map(([from,p])=>LABELS[p][0]+"（"+from+"）"));
+      }
+      return result;
+    }
+    function hypothetical(board,move){
+      const next=new Map(board);next.set(move.to,next.get(move.from));next.delete(move.from);return next;
+    }
+    function threatSummary(board,threats){
+      const weight={k:100,r:90,c:75,n:75,b:45,a:45,p:20};
+      const ranked=[...threats.entries()].sort((a,b)=>(weight[board.get(b[0])?.toLowerCase()]||0)-(weight[board.get(a[0])?.toLowerCase()]||0));
+      if(!ranked.length)return "暂时没有检测到己方棋子位于对方的直接攻击线上。可以考虑发展马、车，或观察中路。";
+      const sampled=ranked.slice(0,2).map(([sq,foes])=>LABELS[board.get(sq)][0]+"（"+sq+"）受到"+foes.slice(0,2).join("、")+"的威胁");
+      return sampled.join("；")+"。先想想要保护、移开，还是反击。";
+    }
+    function renderInsights(base,shown,threats,myTurn){
+      const active=game.status==="active",visible=(assist.tips||!!pendingMove)&&active;
+      el("insights").hidden=!visible;
+      el("previewControls").hidden=!pendingMove;
+      if(!visible)return;
+      if(pendingMove){
+        const m=pendingMove,piece=base.get(m.from),foes=threats.get(m.to);
+        el("insightTitle").textContent="落子预览 · 尚未真正走棋";
+        let t="准备让「"+LABELS[piece][0]+"」从 "+m.from+" 移至 "+m.to+"。";
+        if(m.capture)t+="\n这一步能吃掉对方的「"+LABELS[m.capture][0]+"」。";
+        t+=foes?"\n⚠️ 落点有对方 "+foes.join("、")+" 的攻击线路，请考虑能否承受交换。":"\n落点暂未发现对方棋子的直接攻击线路。";
+        const general=[...shown].find(([_,p])=>p===(game.modelColor==="red"?"K":"k"));
+        if(general&&[...shown].some(([from,p])=>LABELS[p]?.[1]===game.userColor&&attacks(shown,from,general[0])))t+="\n这步棋还会威胁对方的将帅。";
+        el("insightText").textContent=t;
+      }else{
+        el("insightTitle").textContent="局势观察";
+        el("insightText").textContent=game.inCheck&&myTurn?"⚠️ 你正在被将军，必须先解除威胁。绿色边框标示可走的棋子。":threatSummary(shown,threats);
+      }
+    }
     function draw(){
       boardEl.replaceChildren();
       const river = document.createElement("div"); river.className="river"; river.setAttribute("aria-hidden","true");
@@ -99,22 +202,27 @@
       const mine=game.userColor==="red"?"红":"黑", theirs=game.modelColor==="red"?"红":"黑";
       const myTurn=game.status==="active"&&game.sideToMove===game.userColor;
       document.querySelector(".room").classList.toggle("in-check",myTurn&&game.inCheck);
-      el("status").textContent=game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?(game.inCheck?"⚠️ 你的帅被将军了！":"轮到小青落子"):"轮到伊织落子";
+      el("status").textContent=pendingMove?"预览中 · 尚未落子":game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?(game.inCheck?"⚠️ 你的帅被将军了！":"轮到小青落子"):"轮到伊织落子";
       el("turn").textContent=game.status==="active"?(myTurn?(game.inCheck?"先解将":"红方落子"):"等待黑棋"):"已结束";
       el("last").textContent=game.lastMove?"上一步 "+(game.lastMove.color==="red"?"红":"黑")+"方 "+game.lastMove.from+" → "+game.lastMove.to:"小青执"+mine+" · 伊织执"+theirs;
-      hintEl.textContent=game.status!=="active"?"本盘棋已结束":myTurn?(selected?"点击绿色位置完成走棋":game.inCheck?"现在必须先解将！有绿色边框的棋子可以走。":"点红棋，再点合法目标；落子后告诉伊织"):"可以在 ChatGPT 里告诉伊织「我走好了」";
-      const pieces=parseFen(game.fen);
+      hintEl.textContent=pendingMove?"正在查看假设局面，点「确认落子」才会提交。":game.status!=="active"?"本盘棋已结束":myTurn?(selected?(assist.preview?"点绿色位置查看走完后的局面":"点击绿色位置完成走棋"):game.inCheck?"现在必须先解将！有绿色边框的棋子可以走。":"点红棋，再点合法目标；落子后告诉伊织"):"可以在 ChatGPT 里告诉伊织「我走好了」";
+      const base=parseFen(game.fen);
+      const pieces=pendingMove?hypothetical(base,pendingMove):base;
+      const threats=(assist.danger||assist.tips||pendingMove)?dangerMap(pieces,game.userColor):new Map();
+      renderInsights(base,pieces,threats,myTurn);
       const moves=(game.legalMoves||[]).filter(m=>m.from===selected);
       const targets=new Map(moves.map(m=>[m.to,m]));
       for(let rank=9;rank>=0;rank--){
         for(let col=0;col<9;col++){
           const sq=FILES[col]+rank, piece=pieces.get(sq), information=piece?LABELS[piece]:null;
           const node=document.createElement("button");node.type="button";node.className="spot";node.setAttribute("role","gridcell");
-          node.setAttribute("aria-label",sq+" "+(information?information[0]:"空位"));
+          node.setAttribute("aria-label",sq+" "+(information?information[0]:"空位")+(threats.has(sq)?"，受攻击":""));
+          if(threats.has(sq)&&assist.danger){node.classList.add("threatened");node.title="受到 "+threats.get(sq).join("、")+" 的攻击线路威胁";}
           if(sq===selected)node.classList.add("chosen");
-          if(game.lastMove&&(sq===game.lastMove.from||sq===game.lastMove.to))node.classList.add("last");
-          if(targets.has(sq)){node.classList.add("target");if(targets.get(sq).capture)node.classList.add("capture")}
-          if(myTurn&&piece&&information&&information[1]===game.userColor&&(game.legalMoves||[]).some(m=>m.from===sq))node.classList.add("can-move");
+          if(pendingMove){if(sq===pendingMove.from)node.classList.add("preview-start");if(sq===pendingMove.to)node.classList.add("preview-end");}
+          else if(game.lastMove&&(sq===game.lastMove.from||sq===game.lastMove.to))node.classList.add("last");
+          if(!pendingMove&&targets.has(sq)){node.classList.add("target");if(targets.get(sq).capture)node.classList.add("capture")}
+          if(!pendingMove&&myTurn&&piece&&information&&information[1]===game.userColor&&(game.legalMoves||[]).some(m=>m.from===sq))node.classList.add("can-move");
           if(information){
             const disc=document.createElement("span");disc.className="piece "+information[1];disc.textContent=information[0];node.appendChild(disc);
           }
@@ -133,22 +241,17 @@
       if(!gameId||busy||loading)return;loading=true;
       try{
         const data=await request("/api/games/"+encodeURIComponent(gameId));
-        if(!game||data.ply!==game.ply||data.status!==game.status){game=data;selected=null;draw();message("")}
+        if(!game||data.ply!==game.ply||data.status!==game.status){game=data;selected=null;pendingMove=null;draw();message("")}
         // Keep tapped-piece explanations visible until the position actually changes.
       }catch(e){message(e.message+"；棋局可能已过期，请新开一局。")}
       finally{loading=false}
     }
     async function pick(square,piece){
-      if(busy||!game||game.status!=="active"||game.sideToMove!==game.userColor)return;
+      if(busy||pendingMove||!game||game.status!=="active"||game.sideToMove!==game.userColor)return;
       const move=(game.legalMoves||[]).find(m=>m.from===selected&&m.to===square);
       if(move){
-        busy=true;message("");
-        try{
-          game=await request("/api/games/"+encodeURIComponent(gameId)+"/moves",{
-            method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:move.from,to:move.to})
-          });
-          selected=null;draw();
-        }catch(e){message(e.message);await load()}finally{busy=false}
+        if(assist.preview){pendingMove=move;message("");draw();return;}
+        await submitMove(move);
         return;
       }
       const isMine=piece&&LABELS[piece]&&LABELS[piece][1]===game.userColor;
@@ -158,6 +261,16 @@
       selected=canSelect?(selected===square?null:square):null;
       draw();
     }
+    async function submitMove(move){
+      if(busy||!move)return;
+      busy=true;message("");
+      try{
+          game=await request("/api/games/"+encodeURIComponent(gameId)+"/moves",{
+            method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:move.from,to:move.to})
+          });
+          selected=null;pendingMove=null;draw();
+        }catch(e){pendingMove=null;selected=null;draw();message(e.message);await load()}finally{busy=false}
+    }
     async function fresh(){
       if(!confirm("确定要另开一盘棋吗？原来的棋局仍可通过旧链接进入。"))return;
       el("new").disabled=true;
@@ -166,6 +279,16 @@
         location.href="/play?game="+encodeURIComponent(data.gameId);
       }catch(e){message(e.message);el("new").disabled=false}
     }
+
+    for(const [id,key] of [["showDanger","danger"],["usePreview","preview"],["showTips","tips"]]){
+      el(id).addEventListener("change",event=>{
+        assist[key]=event.target.checked;
+        if(key==="preview"&&!assist.preview)pendingMove=null;
+        draw();
+      });
+    }
+    el("confirmMove").addEventListener("click",()=>submitMove(pendingMove));
+    el("cancelMove").addEventListener("click",()=>{pendingMove=null;draw()});
     el("new").addEventListener("click",fresh);
     el("refresh").addEventListener("click",()=>{loading=false;load()});
     el("copy").addEventListener("click",async()=>{
