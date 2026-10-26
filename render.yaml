@@ -6,7 +6,6 @@ services:
     region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /ready
-    maxShutdownDelaySeconds: 15
     autoDeployTrigger: checksPass
     envVars:
       - key: NODE_ENV
