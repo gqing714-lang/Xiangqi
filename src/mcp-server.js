@@ -229,6 +229,30 @@ export function createXiangqiServer(store = gameStore) {
   );
 
   server.registerTool(
+    "undo_move",
+    {
+      title: "Undo last user Xiangqi move",
+      description: "On the user's explicit request, undo their latest Xiangqi move if the model has not replied. Restores the same game and renders the refreshed board. Rejects a stale ply or a model move.",
+      inputSchema: {
+        gameId: z.string().uuid(),
+        expectedPly: z.number().int().positive().describe("Ply last observed with get_game; refuses if the board changed."),
+      },
+      outputSchema: gameOutputSchema,
+      securitySchemes: [{ type: "noauth" }],
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      _meta: boardToolMeta,
+    },
+    async ({ gameId, expectedPly }) => {
+      try {
+        const game = await store.undo(gameId, expectedPly);
+        return textResult(store.view(game, true), `Undid the most recent user's move in game ${gameId}. It is now ${game.sideToMove}'s turn.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "resign_game",
     {
       title: "Resign Xiangqi game",
