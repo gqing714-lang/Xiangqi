@@ -7,6 +7,7 @@ import {
   createInitialBoard,
   legalMoves,
   opposite,
+  parseSquare,
   positionStatus,
   toFen,
 } from "./engine.js";
@@ -70,6 +71,33 @@ function applyMoveToGame(game, actor, from, to) {
   game.updatedAt = nowIso();
   game.updatedAtMs = Date.now();
   return { game, move: game.history.at(-1) };
+}
+
+function undoUserMove(game, expectedPly) {
+  if (expectedPly !== undefined && game.ply !== expectedPly) {
+    throw new Error("Undo rejected: board changed; refresh before trying again");
+  }
+  const last = game.history.at(-1);
+  if (!last || last.actor !== "user" || game.sideToMove !== game.modelColor) {
+    throw new Error("Undo unavailable: only the latest unanswered user move can be undone");
+  }
+  const from = parseSquare(last.from);
+  const to = parseSquare(last.to);
+  if (game.board[from.y][from.x] !== null || game.board[to.y][to.x] !== last.piece) {
+    throw new Error("Undo rejected: inconsistent board history");
+  }
+  game.board[from.y][from.x] = last.piece;
+  game.board[to.y][to.x] = last.capture;
+  game.history.pop();
+  game.ply -= 1;
+  game.sideToMove = game.userColor;
+  const status = positionStatus(game.board, game.sideToMove);
+  game.status = status.status;
+  game.winner = status.winner;
+  game.inCheck = status.inCheck;
+  game.updatedAt = nowIso();
+  game.updatedAtMs = Date.now();
+  return game;
 }
 
 function resignGame(game, actor) {
@@ -138,6 +166,10 @@ export class GameStore {
 
   resign(gameId, actor) {
     return resignGame(this.get(gameId), actor);
+  }
+
+  undo(gameId, expectedPly) {
+    return undoUserMove(this.get(gameId), expectedPly);
   }
 
   legal(gameId) {
@@ -211,6 +243,10 @@ export class RedisGameStore extends GameStore {
 
   async resign(gameId, actor) {
     return this.mutate(gameId, (game) => resignGame(game, actor));
+  }
+
+  async undo(gameId, expectedPly) {
+    return this.mutate(gameId, (game) => undoUserMove(game, expectedPly));
   }
 
   async legal(gameId) {
