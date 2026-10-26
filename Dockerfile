@@ -12,6 +12,7 @@ WORKDIR /app
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/web ./web
 COPY --from=build /app/src ./src
 COPY --from=build /app/server.js ./server.js
 USER node
