@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#eee7d8">
+  <title>小青 × 伊织 · 象棋室</title>
+  <style>
+    :root {font-family:-apple-system,BlinkMacSystemFont,"Noto Sans SC","Microsoft YaHei",sans-serif;color:#352e28;background:#eee7d8}
+    *{box-sizing:border-box}
+    body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);min-width:280px}
+    .room{max-width:690px;margin:0 auto;padding:18px 14px 28px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:13px}
+    h1{font-size:24px;font-weight:750;margin:0;letter-spacing:.04em}
+    .subtitle{font-size:12px;color:#756d63;margin-top:4px}
+    .chip{padding:7px 11px;background:#dcd0bb;border-radius:20px;font-size:12px;white-space:nowrap}
+    .status{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:10px 0;background:#fbf6ea;border:1px solid #d9cbb4;border-radius:12px;padding:12px 14px}
+    .status strong{font-size:15px}.status small{display:block;color:#776c60;margin-top:4px;font-size:12px}
+    .board-shell{border:7px solid #b79262;background:#e7cca1;border-radius:12px;padding:5px;box-shadow:0 6px 22px #5a452622;overflow:hidden}
+    .board{position:relative;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));grid-template-rows:repeat(10,minmax(0,1fr));aspect-ratio:9 / 10;
+      background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - .7px), #97764c calc(12.5% - .7px) calc(12.5% + .7px)),repeating-linear-gradient(0deg, transparent 0 calc(11.111% - .7px), #97764c calc(11.111% - .7px) calc(11.111% + .7px));
+      background-size:88.888% 90%;background-position:center;background-repeat:no-repeat}
+    .river{position:absolute;pointer-events:none;top:45%;height:10%;left:5.56%;width:88.88%;display:flex;align-items:center;justify-content:space-around;z-index:0;background:#e7cca1;color:#79552b;font-family:"Noto Serif SC","SimSun",serif;font-size:clamp(14px,4.1vw,27px);font-weight:700;letter-spacing:.15em}
+    .spot{appearance:none;border:none;background:transparent;margin:0;padding:0;min-width:0;min-height:0;position:relative;display:flex;justify-content:center;align-items:center;z-index:1;touch-action:manipulation;cursor:default}
+    .spot.can-move,.spot.target{cursor:pointer}
+    .spot:focus-visible{outline:3px solid #49855e;outline-offset:-3px;border-radius:50%}
+    .piece{width:82%;height:75%;aspect-ratio:1;border:2px solid #82623a;background:radial-gradient(circle at 30% 25%,#fff8e5,#efdab1);border-radius:50%;box-shadow:0 2px 3px #34241350;display:flex;justify-content:center;align-items:center;font-family:"Noto Serif SC","SimSun",serif;font-weight:800;font-size:clamp(17px,5.4vw,33px);line-height:1}
+    .piece.red{color:#ac3226}.piece.black{color:#38342d}
+    .spot.chosen .piece{box-shadow:0 0 0 4px #438a5c80,0 3px 8px #34241333}
+    .spot.last::after{content:"";position:absolute;inset:12%;border:2px solid #b68534;border-radius:50%;pointer-events:none}
+    .spot.target::before{content:"";position:absolute;width:13px;height:13px;background:#38834b;border-radius:50%;z-index:2;opacity:.9}
+    .spot.target.capture::before{width:70%;height:70%;border:3px solid #38834b;background:transparent}
+    .bottom{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:12px 0;flex-wrap:wrap}
+    .instructions{flex:1;min-width:190px;color:#665b50;font-size:13px;line-height:1.6}
+    .actions{display:flex;gap:6px}
+    button.action{border:1px solid #baac96;background:#fff8e9;padding:9px 12px;border-radius:10px;color:#413429;cursor:pointer;font-size:13px}
+    button.action:disabled{opacity:.45;cursor:not-allowed}
+    .notice{border-top:1px solid #c9bba5;padding-top:12px;color:#73675b;font-size:12px;line-height:1.7}
+    .error{color:#a22e28;font-weight:600;min-height:20px;font-size:13px}
+    @media(min-width:630px){.piece{width:76%;height:75%;font-size:32px}.room{padding-top:28px}}
+    @media(max-width:380px){.room{padding:12px 7px 20px}.board-shell{border-width:5px;padding:3px}.piece{border-width:1.5px;font-size:clamp(16px,5.4vw,21px)}h1{font-size:21px}.actions{width:100%}.actions button{flex:1}}
+  </style>
+</head>
+<body>
+  <main class="room">
+    <header>
+      <div><h1>小青 × 伊织</h1><div class="subtitle">两个人的象棋室 · 红先黑后</div></div>
+      <div class="chip">中国象棋 ♟</div>
+    </header>
+    <section class="status" aria-live="polite">
+      <div><strong id="status">正在读取棋局…</strong><small id="last">小青执红 · 伊织执黑</small></div>
+      <div class="chip" id="turn">连接中</div>
+    </section>
+    <div class="board-shell"><div class="board" id="board" role="grid" aria-label="中国象棋棋盘">
+      <div class="river" aria-hidden="true">楚 河 <span>漢 界</span></div>
+    </div></div>
+    <div class="bottom">
+      <div class="instructions" id="hint">点击自己的棋子，再点击绿色标记落子。</div>
+      <div class="actions"><button class="action" id="refresh">刷新棋局</button><button class="action" id="copy">复制棋局链接</button><button class="action" id="new">新开一局</button></div>
+    </div>
+    <div id="error" class="error" role="alert"></div>
+    <div class="notice">这里负责下棋。小青走完后，在 ChatGPT 对话里告诉伊织「我走好了」，伊织会从同一盘棋中读取局面、思考并下黑棋。本页会自动更新。测试棋局暂存 24 小时，免费存储重启时可能丢失。</div>
+  </main>
+  <script>
+    "use strict";
+    const FILES = "abcdefghi";
+    const LABELS = {
+      K:["帥","red"],A:["仕","red"],B:["相","red"],N:["馬","red"],R:["車","red"],C:["炮","red"],P:["兵","red"],
+      k:["將","black"],a:["士","black"],b:["象","black"],n:["馬","black"],r:["車","black"],c:["砲","black"],p:["卒","black"]
+    };
+    const el = id => document.getElementById(id);
+    const boardEl = el("board"), errorEl = el("error"), hintEl = el("hint");
+    let game = null, selected = null, busy = false, loading = false;
+    let gameId = new URLSearchParams(location.search).get("game") || "";
+    if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(gameId)) gameId = "";
+    function parseFen(fen){
+      const rows = fen.split(" ")[0].split("/"); const pieces = new Map();
+      if(rows.length!==10) throw new Error("棋盘格式错误");
+      for(let rank=9;rank>=0;rank--){
+        const line=rows[9-rank]; let x=0;
+        for(const char of line){if(/[1-9]/.test(char))x+=Number(char);else {pieces.set(FILES[x]+rank,char);x++}}
+        if(x!==9) throw new Error("棋盘格式错误");
+      }
+      return pieces;
+    }
+    function message(t){errorEl.textContent=t||""}
+    function draw(){
+      boardEl.replaceChildren();
+      const river = document.createElement("div"); river.className="river"; river.setAttribute("aria-hidden","true");
+      river.append("楚 河 "); const span=document.createElement("span");span.textContent="漢 界";river.appendChild(span);boardEl.appendChild(river);
+      if(!game){
+        el("status").textContent=gameId?"正在读取棋局…":"欢迎来到象棋室";
+        el("turn").textContent="未开局";
+        hintEl.textContent=gameId?"正在从服务器获取棋盘":"点击「新开一局」开始";
+        return;
+      }
+      const mine=game.userColor==="red"?"红":"黑", theirs=game.modelColor==="red"?"红":"黑";
+      const myTurn=game.status==="active"&&game.sideToMove===game.userColor;
+      el("status").textContent=game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?"轮到小青落子":"轮到伊织落子";
+      el("turn").textContent=game.status==="active"?(myTurn?"红方先行":"等待黑棋"):"已结束";
+      el("last").textContent=game.lastMove?"上一步 "+(game.lastMove.color==="red"?"红":"黑")+"方 "+game.lastMove.from+" → "+game.lastMove.to:"小青执"+mine+" · 伊织执"+theirs;
+      hintEl.textContent=game.status!=="active"?"本盘棋已结束":myTurn?(selected?"点击绿色位置完成走棋":"点红棋，再点合法目标；落子后告诉伊织"):"可以在 ChatGPT 里告诉伊织「我走好了」";
+      const pieces=parseFen(game.fen);
+      const moves=(game.legalMoves||[]).filter(m=>m.from===selected);
+      const targets=new Map(moves.map(m=>[m.to,m]));
+      for(let rank=9;rank>=0;rank--){
+        for(let col=0;col<9;col++){
+          const sq=FILES[col]+rank, piece=pieces.get(sq), information=piece?LABELS[piece]:null;
+          const node=document.createElement("button");node.type="button";node.className="spot";node.setAttribute("role","gridcell");
+          node.setAttribute("aria-label",sq+" "+(information?information[0]:"空位"));
+          if(sq===selected)node.classList.add("chosen");
+          if(game.lastMove&&(sq===game.lastMove.from||sq===game.lastMove.to))node.classList.add("last");
+          if(targets.has(sq)){node.classList.add("target");if(targets.get(sq).capture)node.classList.add("capture")}
+          if(myTurn&&piece&&information&&information[1]===game.userColor&&(game.legalMoves||[]).some(m=>m.from===sq))node.classList.add("can-move");
+          if(information){
+            const disc=document.createElement("span");disc.className="piece "+information[1];disc.textContent=information[0];node.appendChild(disc);
+          }
+          node.addEventListener("click",()=>pick(sq,piece));
+          boardEl.appendChild(node);
+        }
+      }
+    }
+    async function request(url,options){
+      const res=await fetch(url,Object.assign({cache:"no-store"},options||{}));
+      let data;try{data=await res.json()}catch{throw new Error("服务器返回了无法读取的数据")}
+      if(!res.ok)throw new Error(data.error||"服务器暂时无法处理请求");
+      return data;
+    }
+    async function load(){
+      if(!gameId||busy||loading)return;loading=true;
+      try{
+        const data=await request("/api/games/"+encodeURIComponent(gameId));
+        if(!game||data.ply!==game.ply||data.status!==game.status){game=data;selected=null;draw()}
+        message("");
+      }catch(e){message(e.message+"；棋局可能已过期，请新开一局。")}
+      finally{loading=false}
+    }
+    async function pick(square,piece){
+      if(busy||!game||game.status!=="active"||game.sideToMove!==game.userColor)return;
+      const move=(game.legalMoves||[]).find(m=>m.from===selected&&m.to===square);
+      if(move){
+        busy=true;message("");
+        try{
+          game=await request("/api/games/"+encodeURIComponent(gameId)+"/moves",{
+            method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:move.from,to:move.to})
+          });
+          selected=null;draw();
+        }catch(e){message(e.message);await load()}finally{busy=false}
+        return;
+      }
+      selected=piece&&LABELS[piece]&&LABELS[piece][1]===game.userColor&&(game.legalMoves||[]).some(m=>m.from===square)?square:null;draw();
+    }
+    async function fresh(){
+      if(!confirm("确定要另开一盘棋吗？原来的棋局仍可通过旧链接进入。"))return;
+      el("new").disabled=true;
+      try{
+        const data=await request("/api/games",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+        location.href="/play?game="+encodeURIComponent(data.gameId);
+      }catch(e){message(e.message);el("new").disabled=false}
+    }
+    el("new").addEventListener("click",fresh);
+    el("refresh").addEventListener("click",()=>{loading=false;load()});
+    el("copy").addEventListener("click",async()=>{
+      if(!gameId){message("请先开一局");return}
+      try{await navigator.clipboard.writeText(location.href);hintEl.textContent="棋局链接已复制"}
+      catch{message("复制失败，可以直接复制浏览器地址栏里的链接")}
+    });
+    draw();load();
+    setInterval(()=>{if(!document.hidden)load()},2500);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+  </script>
+</body>
+</html>
