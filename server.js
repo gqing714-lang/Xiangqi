@@ -8,7 +8,7 @@ import { createFixedWindowRateLimiter } from "./src/rate-limit.js";
 const port = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
 const WEB_INDEX = new URL("./web/index.html", import.meta.url);
-const GAME_ROUTE = /^\/api\/games\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(\/moves)?$/i;
+const GAME_ROUTE = /^\/api\/games\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(\/moves|\/undo)?$/i;
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -45,7 +45,7 @@ function apiFailure(res, requestId, error) {
   const message = error instanceof Error ? error.message : String(error);
   const status = Number(error?.httpStatus) || (
     message.includes("not found or expired") ? 404 :
-    message.includes("Illegal") || message.includes("turn") || message.includes("finished") ? 409 : 500
+    message.includes("Illegal") || message.includes("turn") || message.includes("finished") || message.includes("Undo") ? 409 : 500
   );
   log(status >= 500 ? "error" : "info", "web_api_failure", { requestId, status, message });
   sendJson(res, status, { error: status >= 500 ? "服务器暂时遇到问题，请稍后重试" : message });
@@ -141,8 +141,9 @@ const httpServer = createServer(async (req, res) => {
   const gameMatch = url.pathname.match(GAME_ROUTE);
   if (gameMatch) {
     const gameId = gameMatch[1];
-    const isMove = !!gameMatch[2];
-    if (req.method === "GET" && !isMove) {
+    const isMove = gameMatch[2] === "/moves";
+    const isUndo = gameMatch[2] === "/undo";
+    if (req.method === "GET" && !isMove && !isUndo) {
       try {
         const game = await gameStore.get(gameId);
         sendJson(res, 200, gameStore.view(game, true));
@@ -159,6 +160,19 @@ const httpServer = createServer(async (req, res) => {
         }
         const result = await gameStore.move(gameId, "user", payload.from, payload.to);
         sendJson(res, 200, gameStore.view(result.game, true));
+      } catch (error) { apiFailure(res, requestId, error); }
+      return;
+    }
+    if (req.method === "POST" && isUndo) {
+      try {
+        const payload = await parseSmallJson(req);
+        if (!Number.isInteger(payload?.expectedPly) || payload.expectedPly < 1) {
+          const error = new Error("请提供当前步数以安全悔棋");
+          error.httpStatus = 400;
+          throw error;
+        }
+        const game = await gameStore.undo(gameId, payload.expectedPly);
+        sendJson(res, 200, gameStore.view(game, true));
       } catch (error) { apiFailure(res, requestId, error); }
       return;
     }
