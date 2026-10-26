@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createXiangqiServer, gameStore } from "./src/mcp-server.js";
@@ -6,6 +7,50 @@ import { createFixedWindowRateLimiter } from "./src/rate-limit.js";
 
 const port = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
+const WEB_INDEX = new URL("./web/index.html", import.meta.url);
+const GAME_ROUTE = /^\/api\/games\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(\/moves)?$/i;
+function sendJson(res, status, payload) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(JSON.stringify(payload));
+}
+
+async function parseSmallJson(req) {
+  if ((req.headers["content-type"] ?? "").split(";")[0].trim() !== "application/json") {
+    const error = new Error("Expected application/json");
+    error.httpStatus = 415;
+    throw error;
+  }
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk.toString("utf8");
+    if (Buffer.byteLength(body, "utf8") > 2048) {
+      const error = new Error("Request body is too large");
+      error.httpStatus = 413;
+      throw error;
+    }
+  }
+  try { return JSON.parse(body); }
+  catch {
+    const error = new Error("Invalid JSON request");
+    error.httpStatus = 400;
+    throw error;
+  }
+}
+
+function apiFailure(res, requestId, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = Number(error?.httpStatus) || (
+    message.includes("not found or expired") ? 404 :
+    message.includes("Illegal") || message.includes("turn") || message.includes("finished") ? 409 : 500
+  );
+  log(status >= 500 ? "error" : "info", "web_api_failure", { requestId, status, message });
+  sendJson(res, status, { error: status >= 500 ? "服务器暂时遇到问题，请稍后重试" : message });
+}
+
 const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
 const rateLimit = createFixedWindowRateLimiter({
   limit: Number(process.env.RATE_LIMIT_PER_MINUTE ?? 120),
@@ -53,6 +98,61 @@ const httpServer = createServer(async (req, res) => {
       "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, x-request-id",
     });
     res.end();
+    return;
+  }
+
+  // Standalone mobile web room: uses the same authoritative game store as MCP.
+  if (req.method === "GET" && (url.pathname === "/play" || url.pathname === "/play/")) {
+    try {
+      const html = await readFile(WEB_INDEX, "utf8");
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      });
+      res.end(html);
+    } catch (error) {
+      log("error", "web_page_failed", { requestId, message: String(error) });
+      sendJson(res, 500, { error: "网页载入失败" });
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/games" && req.method === "POST") {
+    try {
+      await parseSmallJson(req);
+      const game = await gameStore.start("red");
+      sendJson(res, 201, gameStore.view(game, true));
+    } catch (error) { apiFailure(res, requestId, error); }
+    return;
+  }
+
+  const gameMatch = url.pathname.match(GAME_ROUTE);
+  if (gameMatch) {
+    const gameId = gameMatch[1];
+    const isMove = !!gameMatch[2];
+    if (req.method === "GET" && !isMove) {
+      try {
+        const game = await gameStore.get(gameId);
+        sendJson(res, 200, gameStore.view(game, true));
+      } catch (error) { apiFailure(res, requestId, error); }
+      return;
+    }
+    if (req.method === "POST" && isMove) {
+      try {
+        const payload = await parseSmallJson(req);
+        if (!payload || !/^[a-i][0-9]$/.test(payload.from) || !/^[a-i][0-9]$/.test(payload.to)) {
+          const error = new Error("请提供正确的落子坐标");
+          error.httpStatus = 400;
+          throw error;
+        }
+        const result = await gameStore.move(gameId, "user", payload.from, payload.to);
+        sendJson(res, 200, gameStore.view(result.game, true));
+      } catch (error) { apiFailure(res, requestId, error); }
+      return;
+    }
+    sendJson(res, 405, { error: "不支持这个操作" });
     return;
   }
 
