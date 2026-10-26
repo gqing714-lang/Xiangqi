@@ -87,7 +87,7 @@
     </section>
     <div class="bottom">
       <div class="instructions" id="hint">点击自己的棋子，再点击绿色标记落子。</div>
-      <div class="actions"><button class="action" id="refresh">刷新棋局</button><button class="action" id="copy">复制棋局链接</button><button class="action" id="new">新开一局</button></div>
+      <div class="actions"><button class="action" id="undo" disabled>↶ 悔棋</button><button class="action" id="refresh">刷新棋局</button><button class="action" id="copy">复制棋局链接</button><button class="action" id="new">新开一局</button></div>
     </div>
     <div id="error" class="error" role="alert"></div>
     <div class="notice">这里负责下棋。小青走完后，在 ChatGPT 对话里告诉伊织「我走好了」，伊织会从同一盘棋中读取局面、思考并下黑棋。本页会自动更新。测试棋局暂存 24 小时，免费存储重启时可能丢失。</div>
@@ -201,6 +201,7 @@
       }
       const mine=game.userColor==="red"?"红":"黑", theirs=game.modelColor==="red"?"红":"黑";
       const myTurn=game.status==="active"&&game.sideToMove===game.userColor;
+      el("undo").disabled=busy || !game.lastMove || game.lastMove.actor!=="user" || game.sideToMove!==game.modelColor;
       document.querySelector(".room").classList.toggle("in-check",myTurn&&game.inCheck);
       el("status").textContent=pendingMove?"预览中 · 尚未落子":game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?(game.inCheck?"⚠️ 你的帅被将军了！":"轮到小青落子"):"轮到伊织落子";
       el("turn").textContent=game.status==="active"?(myTurn?(game.inCheck?"先解将":"红方落子"):"等待黑棋"):"已结束";
@@ -271,6 +272,18 @@
           selected=null;pendingMove=null;draw();
         }catch(e){pendingMove=null;selected=null;draw();message(e.message);await load()}finally{busy=false}
     }
+    async function undo(){
+      if(busy||!game||!game.lastMove||game.lastMove.actor!=="user"||game.sideToMove!==game.modelColor)return;
+      if(!confirm("把刚才的那一步撤回吗？之前的棋局会保留。"))return;
+      busy=true;el("undo").disabled=true;message("");
+      try{
+        game=await request("/api/games/"+encodeURIComponent(gameId)+"/undo",{
+          method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({expectedPly:game.ply})
+        });
+        selected=null;pendingMove=null;draw();message("已经悔棋成功，可以重新选择走法啦。");
+      }catch(e){message(e.message);pendingMove=null;selected=null;await load()}
+      finally{busy=false;if(game)draw()}
+    }
     async function fresh(){
       if(!confirm("确定要另开一盘棋吗？原来的棋局仍可通过旧链接进入。"))return;
       el("new").disabled=true;
@@ -290,6 +303,7 @@
     el("confirmMove").addEventListener("click",()=>submitMove(pendingMove));
     el("cancelMove").addEventListener("click",()=>{pendingMove=null;draw()});
     el("new").addEventListener("click",fresh);
+    el("undo").addEventListener("click",undo);
     el("refresh").addEventListener("click",()=>{loading=false;load()});
     el("copy").addEventListener("click",async()=>{
       if(!gameId){message("请先开一局");return}
