@@ -16,6 +16,8 @@
     .chip{padding:7px 11px;background:#dcd0bb;border-radius:20px;font-size:12px;white-space:nowrap}
     .status{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:10px 0;background:#fbf6ea;border:1px solid #d9cbb4;border-radius:12px;padding:12px 14px}
     .status strong{font-size:15px}.status small{display:block;color:#776c60;margin-top:4px;font-size:12px}
+    .room.in-check .status{background:#fff0e8;border-color:#d99a85}
+    .room.in-check .spot.can-move .piece{box-shadow:0 0 0 3px #34884e,0 2px 5px #34241350}
     .board-shell{border:7px solid #b79262;background:#e7cca1;border-radius:12px;padding:5px;box-shadow:0 6px 22px #5a452622;overflow:hidden}
     .board{position:relative;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));grid-template-rows:repeat(10,minmax(0,1fr));aspect-ratio:9 / 10;
       background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - .7px), #97764c calc(12.5% - .7px) calc(12.5% + .7px)),repeating-linear-gradient(0deg, transparent 0 calc(11.111% - .7px), #97764c calc(11.111% - .7px) calc(11.111% + .7px));
@@ -96,10 +98,11 @@
       }
       const mine=game.userColor==="red"?"红":"黑", theirs=game.modelColor==="red"?"红":"黑";
       const myTurn=game.status==="active"&&game.sideToMove===game.userColor;
-      el("status").textContent=game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?"轮到小青落子":"轮到伊织落子";
-      el("turn").textContent=game.status==="active"?(myTurn?"红方先行":"等待黑棋"):"已结束";
+      document.querySelector(".room").classList.toggle("in-check",myTurn&&game.inCheck);
+      el("status").textContent=game.status!=="active"?(game.winner?(game.winner===game.userColor?"小青获胜！":"伊织获胜！"):"对局结束"):myTurn?(game.inCheck?"⚠️ 你的帅被将军了！":"轮到小青落子"):"轮到伊织落子";
+      el("turn").textContent=game.status==="active"?(myTurn?(game.inCheck?"先解将":"红方落子"):"等待黑棋"):"已结束";
       el("last").textContent=game.lastMove?"上一步 "+(game.lastMove.color==="red"?"红":"黑")+"方 "+game.lastMove.from+" → "+game.lastMove.to:"小青执"+mine+" · 伊织执"+theirs;
-      hintEl.textContent=game.status!=="active"?"本盘棋已结束":myTurn?(selected?"点击绿色位置完成走棋":"点红棋，再点合法目标；落子后告诉伊织"):"可以在 ChatGPT 里告诉伊织「我走好了」";
+      hintEl.textContent=game.status!=="active"?"本盘棋已结束":myTurn?(selected?"点击绿色位置完成走棋":game.inCheck?"现在必须先解将！有绿色边框的棋子可以走。":"点红棋，再点合法目标；落子后告诉伊织"):"可以在 ChatGPT 里告诉伊织「我走好了」";
       const pieces=parseFen(game.fen);
       const moves=(game.legalMoves||[]).filter(m=>m.from===selected);
       const targets=new Map(moves.map(m=>[m.to,m]));
@@ -130,8 +133,8 @@
       if(!gameId||busy||loading)return;loading=true;
       try{
         const data=await request("/api/games/"+encodeURIComponent(gameId));
-        if(!game||data.ply!==game.ply||data.status!==game.status){game=data;selected=null;draw()}
-        message("");
+        if(!game||data.ply!==game.ply||data.status!==game.status){game=data;selected=null;draw();message("")}
+        // Keep tapped-piece explanations visible until the position actually changes.
       }catch(e){message(e.message+"；棋局可能已过期，请新开一局。")}
       finally{loading=false}
     }
@@ -148,7 +151,12 @@
         }catch(e){message(e.message);await load()}finally{busy=false}
         return;
       }
-      selected=piece&&LABELS[piece]&&LABELS[piece][1]===game.userColor&&(game.legalMoves||[]).some(m=>m.from===square)?square:null;draw();
+      const isMine=piece&&LABELS[piece]&&LABELS[piece][1]===game.userColor;
+      const canSelect=isMine&&(game.legalMoves||[]).some(m=>m.from===square);
+      if(isMine&&!canSelect)message(game.inCheck?"你的帅正在被将军，这枚棋子不能解除将军。请点绿色边框的棋子。":"这枚棋子目前没有合法走法，可能被其他棋子挡住了。");
+      else message("");
+      selected=canSelect?(selected===square?null:square):null;
+      draw();
     }
     async function fresh(){
       if(!confirm("确定要另开一盘棋吗？原来的棋局仍可通过旧链接进入。"))return;
