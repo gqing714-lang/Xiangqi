@@ -119,6 +119,16 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/games" || url.pathname.startsWith("/api/games/")) {
+    const decision = rateLimit(clientAddress(req));
+    res.setHeader("RateLimit-Remaining", String(decision.remaining));
+    if (!decision.allowed) {
+      res.setHeader("Retry-After", String(decision.retryAfterSeconds));
+      sendJson(res, 429, { error: "请求太频繁，请稍后再试" });
+      return;
+    }
+  }
+
   if (url.pathname === "/api/games" && req.method === "POST") {
     try {
       await parseSmallJson(req);
